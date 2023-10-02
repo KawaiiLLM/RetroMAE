@@ -38,6 +38,7 @@ from transformers.trainer_utils import is_main_process
 from modeling import BertForTextCompression
 from data import RetroMAEDataset, RetroMAECollator
 from arguments import ModelArguments, DataTrainingArguments, CotMAEPreTrainingArguments as TrainingArguments
+from datetime import datetime
 
 
 class TrainerWithLogs(Trainer):
@@ -107,6 +108,7 @@ class RetroMAETrainer:
         self.model_args = model_args
         self.training_args = training_args
         self.tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, use_fast=True)
+        self.tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
 
     def tokenize_function(self, examples: Dict[str, Any]):
         texts = ['[CLS] ' * (self.model_args.n_cls_tokens - 1) + text for text in examples['text']]
@@ -115,9 +117,15 @@ class RetroMAETrainer:
         return {"input_ids": tokenized_texts['input_ids']}
 
     def train(self):
-        train_set = load_dataset('json', data_files=self.data_args.train_path)['train']
-        train_set = train_set.map(self.tokenize_function, remove_columns=train_set.column_names, batched=True,
-                                  batch_size=self.training_args.per_device_train_batch_size)
+        data_file = os.path.join(self.data_args.train_path, 'train.jsonl')
+        tokenized_data_file = os.path.join(self.data_args.train_path, 'tokenized_train_data')
+        if os.path.exists(tokenized_data_file):
+            train_set = datasets.load_from_disk(tokenized_data_file)
+        else:
+            train_set = load_dataset('json', data_files=data_file)['train']
+            train_set = train_set.map(self.tokenize_function, remove_columns=train_set.column_names, batched=True,
+                                      num_proc=3)
+            train_set.save_to_disk(tokenized_data_file)
         train_set = RetroMAEDataset(train_set, self.data_args)
         eval_set = None
         data_collator = RetroMAECollator(
@@ -176,29 +184,30 @@ def main():
             n_cls_tokens=1
         )
         data_args = DataTrainingArguments(
-            max_seq_length=128,
-            train_path='./data/train.jsonl',
-            encoder_mask_ratio=0.30,
-            decoder_mask_ratio=0.45,
+            max_seq_length=512,
+            train_path='./data/wikipedia',
+            encoder_mask_ratio=0.3,
+            decoder_mask_ratio=0.5,
         )
         training_args = TrainingArguments(
-            output_dir='./output',
+            output_dir='./output/' + datetime.now().strftime("%Y-%m-%d-%H-%M-%S"),
             do_train=True,
             do_predict=False,
-            logging_steps=20,
-            logging_dir='./runs',
-            save_steps=2000,
-            save_total_limit=4,
-            fp16=True,
-            warmup_ratio=0.1,
-            per_device_train_batch_size=8,
-            gradient_accumulation_steps=1,
             learning_rate=1e-4,
             weight_decay=0.01,
-            max_steps=800000,
+            per_device_train_batch_size=16,
+            logging_steps=1000,
+            logging_dir='./runs',
+            save_steps=200000,
+            save_total_limit=10,
+            # max_steps=800000,
+            num_train_epochs=1,
+            fp16=True,
+            warmup_ratio=0.1,
+            gradient_accumulation_steps=1,
             overwrite_output_dir=True,
             dataloader_drop_last=True,
-            dataloader_num_workers=8,
+            dataloader_num_workers=4,
         )
     elif len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,

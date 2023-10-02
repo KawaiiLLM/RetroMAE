@@ -6,7 +6,7 @@ import os
 import torch
 from torch.utils.data import Dataset
 from transformers import DataCollatorForWholeWordMask
-from transformers.data.data_collator import tolist, _torch_collate_batch, BatchEncoding
+from transformers.data.data_collator import tolist, _torch_collate_batch
 
 from transformers.utils import logging
 
